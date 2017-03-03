@@ -383,7 +383,7 @@ namespace CognitiveServicesTTS
                 handler(this, e);
             }
         }
-
+        
         /// <summary>
         /// Inputs Options for the TTS Service.
         /// </summary>
