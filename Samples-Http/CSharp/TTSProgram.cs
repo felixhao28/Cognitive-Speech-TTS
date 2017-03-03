@@ -36,6 +36,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using CognitiveServicesTTS;
 
@@ -46,6 +47,8 @@ namespace TTSSample
         private static Stopwatch sw = new Stopwatch();
         private static List<long> firstByteLatency = new List<long>();
         private static List<long> lastByteLatency = new List<long>();
+        private static List<int> bytesRead = new List<int>();
+        private static string outputFilename = null;
 
         /// <summary>
         /// This method is called once the audio returned from the service.
@@ -58,13 +61,13 @@ namespace TTSSample
         {
             Console.WriteLine("First Byte Latency={0}", sw.ElapsedMilliseconds);
             firstByteLatency.Add(sw.ElapsedMilliseconds);
-            // For SoundPlayer to be able to play the wav file, it has to be encoded in PCM.
-            // Use output audio format AudioOutputFormat.Riff16Khz16BitMonoPcm to do that.
             using (var memoryStream = new MemoryStream())
             {
                 args.EventData.CopyTo(memoryStream);
                 var x = memoryStream.ToArray();
                 Console.WriteLine(x.Length + " bytes read.");
+                bytesRead.Add(x.Length);
+                //if (outputFilename != null) File.WriteAllBytes(outputFilename, x);
                 Console.WriteLine("Last Byte Latency={0}", sw.ElapsedMilliseconds);
                 lastByteLatency.Add(sw.ElapsedMilliseconds);
             }
@@ -90,13 +93,31 @@ namespace TTSSample
             cortana.OnAudioAvailable += PlayAudio;
             cortana.OnError += ErrorHandler;
 
+            cortana.Speak(CancellationToken.None, new Synthesize.InputOptions()
+            {
+                RequestUri = new Uri(requestUri),
+                // Text to speak
+                Text = "Hello this is a warmup.",
+                VoiceType = Gender.Female,
+                // Refer to the documentation for complete list of supported locales.
+                Locale = "en-US",
+                // You can also customize the output voice. Refer to the documentation to view the different
+                // voices that the TTS service can output.
+                VoiceName = "Microsoft Server Speech Text to Speech Voice (en-US, ZiraRUS)",
+                AuthorizationToken = "Bearer " + accessToken,
+            }).Wait();
+
+            double[] wavLength = new double[sentences.Length];
+            var table = new StringBuilder("AudioFormat\tAvg. First Byte Latency\tAvg. Last Byte Latency\n");
             foreach (var outputFormat in Enum.GetValues(typeof(AudioOutputFormat)).Cast<AudioOutputFormat>())
             {
-                Console.WriteLine("AudioFormat = {0}", Enum.GetName(typeof(AudioOutputFormat), outputFormat));
+                var outputFormatName = Enum.GetName(typeof(AudioOutputFormat), outputFormat);
+                Console.WriteLine("AudioFormat = {0}", outputFormatName);
                 var count = 0;
                 foreach (var text in sentences)
                 {
                     Console.WriteLine("Test " + (++count));
+                    outputFilename = String.Format("{0}-{1}", outputFormatName, count);
                     sw.Restart();
                     cortana.Speak(CancellationToken.None, new Synthesize.InputOptions()
                     {
@@ -113,16 +134,23 @@ namespace TTSSample
                         OutputFormat = outputFormat,
                         AuthorizationToken = "Bearer " + accessToken,
                     }).Wait();
+                    if (outputFormat == AudioOutputFormat.Riff16Khz16BitMonoPcm)
+                    {
+                        wavLength[count - 1] = bytesRead[count - 1] / 32;
+                    }
                 }
-                firstByteLatency.RemoveAt(0);
                 var avgFBL = firstByteLatency.Average();
                 firstByteLatency.Clear();
-                lastByteLatency.RemoveAt(0);
                 var avgLBL = lastByteLatency.Average();
                 lastByteLatency.Clear();
-                Console.WriteLine("Average First Byte Latency: {0}ms", avgFBL);
-                Console.WriteLine("Average Last Byte Latency: {0}ms", avgLBL);
+                var avgBytes = bytesRead.Average();
+                bytesRead.Clear();
+                Console.WriteLine("Average First Byte Latency: {0} ms", avgFBL);
+                Console.WriteLine("Average Last Byte Latency: {0} ms", avgLBL);
+                table.AppendLine(outputFormatName + "\t" + avgFBL + "\t" + avgLBL);
             }
+            Console.WriteLine(table);
+            Console.WriteLine("Average Wav Length: {0} ms", wavLength.Average());
         }
 
         private static void Main(string[] args)
@@ -150,6 +178,7 @@ namespace TTSSample
             }
 
             var sentences = File.ReadAllLines("en-US_SST1000.txt");
+            //var sentences = new string[] { "Hello world." };
 
             Console.WriteLine("Starting TTSSample request code execution.");
 
