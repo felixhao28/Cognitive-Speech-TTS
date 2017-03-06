@@ -49,7 +49,7 @@ namespace TTSSample
         private static List<long> lastByteLatency = new List<long>();
         private static List<int> bytesRead = new List<int>();
         private static string outputFilename = null;
-
+        
         /// <summary>
         /// This method is called once the audio returned from the service.
         /// It will then attempt to play that audio file.
@@ -84,7 +84,7 @@ namespace TTSSample
             Console.WriteLine("Unable to complete the TTS request: [{0}]", e.EventData.ToString());
         }
 
-        private static void HttpClientTest(string accessToken, string[] sentences)
+        private static void HttpClientTest(string accessToken, string[] sentences, string locale, string voiceName)
         {
             string requestUri = "https://speech.platform.bing.com/synthesize";
             Console.WriteLine("===Http client code test===");
@@ -100,43 +100,60 @@ namespace TTSSample
                 Text = "Hello this is a warmup.",
                 VoiceType = Gender.Female,
                 // Refer to the documentation for complete list of supported locales.
-                Locale = "en-US",
+                Locale = locale,
                 // You can also customize the output voice. Refer to the documentation to view the different
                 // voices that the TTS service can output.
-                VoiceName = "Microsoft Server Speech Text to Speech Voice (en-US, ZiraRUS)",
+                VoiceName = voiceName,
                 AuthorizationToken = "Bearer " + accessToken,
             }).Wait();
 
             double[] wavLength = new double[sentences.Length];
             var table = new StringBuilder("AudioFormat\tAvg. First Byte Latency\tAvg. Last Byte Latency\n");
+            Queue<long> requestTime = new Queue<long>();
             foreach (var outputFormat in Enum.GetValues(typeof(AudioOutputFormat)).Cast<AudioOutputFormat>())
             {
                 var outputFormatName = Enum.GetName(typeof(AudioOutputFormat), outputFormat);
                 Console.WriteLine("AudioFormat = {0}", outputFormatName);
                 var count = 0;
-                foreach (var text in sentences)
+                for (var i = 0; i < 10; i++)
                 {
-                    Console.WriteLine("Test " + (++count));
-                    outputFilename = String.Format("{0}-{1}", outputFormatName, count);
-                    sw.Restart();
-                    cortana.Speak(CancellationToken.None, new Synthesize.InputOptions()
+                    foreach (var text in sentences)
                     {
-                        RequestUri = new Uri(requestUri),
-                        // Text to speak
-                        Text = text,
-                        VoiceType = Gender.Female,
-                        // Refer to the documentation for complete list of supported locales.
-                        Locale = "en-US",
-                        // You can also customize the output voice. Refer to the documentation to view the different
-                        // voices that the TTS service can output.
-                        VoiceName = "Microsoft Server Speech Text to Speech Voice (en-US, ZiraRUS)",
-                        // Service can return audio in different output format.
-                        OutputFormat = outputFormat,
-                        AuthorizationToken = "Bearer " + accessToken,
-                    }).Wait();
-                    if (outputFormat == AudioOutputFormat.Riff16Khz16BitMonoPcm)
-                    {
-                        wavLength[count - 1] = bytesRead[count - 1] / 32;
+                        // Standard S0 pricing tier allows 20 calls/second
+                        // Use 19 here just to be safe
+                        while (requestTime.Count >= 19)
+                        {
+                            while (requestTime.Count > 0 && DateTime.Now.Ticks - requestTime.Peek() > 60 * 1000)
+                            {
+                                requestTime.Dequeue();
+                            }
+                            Thread.Sleep(1000);
+                        }
+
+                        requestTime.Enqueue(DateTime.Now.Ticks);
+
+                        Console.WriteLine("Test " + (++count));
+                        outputFilename = String.Format("{0}-{1}", outputFormatName, count);
+                        sw.Restart();
+                        cortana.Speak(CancellationToken.None, new Synthesize.InputOptions()
+                        {
+                            RequestUri = new Uri(requestUri),
+                            // Text to speak
+                            Text = text,
+                            VoiceType = Gender.Female,
+                            // Refer to the documentation for complete list of supported locales.
+                            Locale = locale,
+                            // You can also customize the output voice. Refer to the documentation to view the different
+                            // voices that the TTS service can output.
+                            VoiceName = voiceName,
+                            // Service can return audio in different output format.
+                            OutputFormat = outputFormat,
+                            AuthorizationToken = "Bearer " + accessToken,
+                        }).Wait();
+                        if (count <= sentences.Length && outputFormat == AudioOutputFormat.Riff16Khz16BitMonoPcm)
+                        {
+                            wavLength[count - 1] = bytesRead[count - 1] / 32;
+                        }
                     }
                 }
                 var avgFBL = firstByteLatency.Average();
@@ -177,14 +194,16 @@ namespace TTSSample
                 return;
             }
 
-            var sentences = File.ReadAllLines("en-US_SST1000.txt");
+            //var sentences = File.ReadAllLines("en-US_SST1000.txt");
+            var sentences = File.ReadAllLines("zh-CN_SST1000.txt");
             //var sentences = new string[] { "Hello world." };
 
             Console.WriteLine("Starting TTSSample request code execution.");
 
             //LegacyTest(accessToken, sentences);
 
-            HttpClientTest(accessToken, sentences);
+            //HttpClientTest(accessToken, sentences, "en-US", "Microsoft Server Speech Text to Speech Voice (en-US, ZiraRUS)");
+            HttpClientTest(accessToken, sentences, "zh-CN", "Microsoft Server Speech Text to Speech Voice (zh-CN, HuiHuiRUS)");
         }
     }
 }
