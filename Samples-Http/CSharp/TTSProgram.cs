@@ -35,6 +35,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Media;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -49,7 +50,7 @@ namespace TTSSample
         private static List<long> lastByteLatency = new List<long>();
         private static List<int> bytesRead = new List<int>();
         private static string outputFilename = null;
-        
+      
         /// <summary>
         /// This method is called once the audio returned from the service.
         /// It will then attempt to play that audio file.
@@ -59,6 +60,7 @@ namespace TTSSample
         /// <param name="args">The <see cref="GenericEventArgs{Stream}"/> instance containing the event data.</param>
         private static void PlayAudio(object sender, GenericEventArgs<Stream> args)
         {
+
             Console.WriteLine("First Byte Latency={0}", sw.ElapsedMilliseconds);
             firstByteLatency.Add(sw.ElapsedMilliseconds);
             using (var memoryStream = new MemoryStream())
@@ -81,7 +83,7 @@ namespace TTSSample
         /// <param name="e">The <see cref="GenericEventArgs{Exception}"/> instance containing the event data.</param>
         private static void ErrorHandler(object sender, GenericEventArgs<Exception> e)
         {
-            Console.WriteLine("Unable to complete the TTS request: [{0}]", e.EventData.ToString());
+            Console.WriteLine("Unable to complete the TTS request: [{0}]", e.ToString());
         }
 
         private static void HttpClientTest(string accessToken, string[] sentences, string locale, string voiceName)
@@ -193,10 +195,12 @@ namespace TTSSample
                 Console.WriteLine(ex.Message);
                 return;
             }
+            Console.WriteLine("Starting TTSSample request code execution.");
 
             //var sentences = File.ReadAllLines("en-US_SST1000.txt");
             var sentences = File.ReadAllLines("zh-CN_SST1000.txt");
             //var sentences = new string[] { "Hello world." };
+
 
             Console.WriteLine("Starting TTSSample request code execution.");
 
