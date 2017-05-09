@@ -32,8 +32,12 @@
 //
 
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Media;
+using System.Linq;
+using System.Text;
 using System.Threading;
 using CognitiveServicesTTS;
 
@@ -41,6 +45,12 @@ namespace TTSSample
 {
     internal class Program
     {
+        private static Stopwatch sw = new Stopwatch();
+        private static List<long> firstByteLatency = new List<long>();
+        private static List<long> lastByteLatency = new List<long>();
+        private static List<int> bytesRead = new List<int>();
+        private static string outputFilename = null;
+      
         /// <summary>
         /// This method is called once the audio returned from the service.
         /// It will then attempt to play that audio file.
@@ -50,12 +60,19 @@ namespace TTSSample
         /// <param name="args">The <see cref="GenericEventArgs{Stream}"/> instance containing the event data.</param>
         private static void PlayAudio(object sender, GenericEventArgs<Stream> args)
         {
-            Console.WriteLine(args.EventData);
 
-            // For SoundPlayer to be able to play the wav file, it has to be encoded in PCM.
-            // Use output audio format AudioOutputFormat.Riff16Khz16BitMonoPcm to do that.
-            SoundPlayer player = new SoundPlayer(args.EventData);
-            player.PlaySync();
+            Console.WriteLine("First Byte Latency={0}", sw.ElapsedMilliseconds);
+            firstByteLatency.Add(sw.ElapsedMilliseconds);
+            using (var memoryStream = new MemoryStream())
+            {
+                args.EventData.CopyTo(memoryStream);
+                var x = memoryStream.ToArray();
+                Console.WriteLine(x.Length + " bytes read.");
+                bytesRead.Add(x.Length);
+                //if (outputFilename != null) File.WriteAllBytes(outputFilename, x);
+                Console.WriteLine("Last Byte Latency={0}", sw.ElapsedMilliseconds);
+                lastByteLatency.Add(sw.ElapsedMilliseconds);
+            }
             args.EventData.Dispose();
         }
 
@@ -69,8 +86,95 @@ namespace TTSSample
             Console.WriteLine("Unable to complete the TTS request: [{0}]", e.ToString());
         }
 
+        private static void HttpClientTest(string accessToken, string[] sentences, string locale, string voiceName)
+        {
+            string requestUri = "https://speech.platform.bing.com/synthesize";
+            Console.WriteLine("===Http client code test===");
+            var cortana = new Synthesize();
+
+            cortana.OnAudioAvailable += PlayAudio;
+            cortana.OnError += ErrorHandler;
+
+            cortana.Speak(CancellationToken.None, new Synthesize.InputOptions()
+            {
+                RequestUri = new Uri(requestUri),
+                // Text to speak
+                Text = "Hello this is a warmup.",
+                VoiceType = Gender.Female,
+                // Refer to the documentation for complete list of supported locales.
+                Locale = locale,
+                // You can also customize the output voice. Refer to the documentation to view the different
+                // voices that the TTS service can output.
+                VoiceName = voiceName,
+                AuthorizationToken = "Bearer " + accessToken,
+            }).Wait();
+
+            double[] wavLength = new double[sentences.Length];
+            var table = new StringBuilder("AudioFormat\tAvg. First Byte Latency\tAvg. Last Byte Latency\n");
+            Queue<long> requestTime = new Queue<long>();
+            foreach (var outputFormat in Enum.GetValues(typeof(AudioOutputFormat)).Cast<AudioOutputFormat>())
+            {
+                var outputFormatName = Enum.GetName(typeof(AudioOutputFormat), outputFormat);
+                Console.WriteLine("AudioFormat = {0}", outputFormatName);
+                var count = 0;
+                for (var i = 0; i < 10; i++)
+                {
+                    foreach (var text in sentences)
+                    {
+                        // Standard S0 pricing tier allows 20 calls/second
+                        // Use 19 here just to be safe
+                        while (requestTime.Count >= 19)
+                        {
+                            while (requestTime.Count > 0 && DateTime.Now.Ticks - requestTime.Peek() > 60 * 1000)
+                            {
+                                requestTime.Dequeue();
+                            }
+                            Thread.Sleep(1000);
+                        }
+
+                        requestTime.Enqueue(DateTime.Now.Ticks);
+
+                        Console.WriteLine("Test " + (++count));
+                        outputFilename = String.Format("{0}-{1}", outputFormatName, count);
+                        sw.Restart();
+                        cortana.Speak(CancellationToken.None, new Synthesize.InputOptions()
+                        {
+                            RequestUri = new Uri(requestUri),
+                            // Text to speak
+                            Text = text,
+                            VoiceType = Gender.Female,
+                            // Refer to the documentation for complete list of supported locales.
+                            Locale = locale,
+                            // You can also customize the output voice. Refer to the documentation to view the different
+                            // voices that the TTS service can output.
+                            VoiceName = voiceName,
+                            // Service can return audio in different output format.
+                            OutputFormat = outputFormat,
+                            AuthorizationToken = "Bearer " + accessToken,
+                        }).Wait();
+                        if (count <= sentences.Length && outputFormat == AudioOutputFormat.Riff16Khz16BitMonoPcm)
+                        {
+                            wavLength[count - 1] = bytesRead[count - 1] / 32;
+                        }
+                    }
+                }
+                var avgFBL = firstByteLatency.Average();
+                firstByteLatency.Clear();
+                var avgLBL = lastByteLatency.Average();
+                lastByteLatency.Clear();
+                var avgBytes = bytesRead.Average();
+                bytesRead.Clear();
+                Console.WriteLine("Average First Byte Latency: {0} ms", avgFBL);
+                Console.WriteLine("Average Last Byte Latency: {0} ms", avgLBL);
+                table.AppendLine(outputFormatName + "\t" + avgFBL + "\t" + avgLBL);
+            }
+            Console.WriteLine(table);
+            Console.WriteLine("Average Wav Length: {0} ms", wavLength.Average());
+        }
+
         private static void Main(string[] args)
         {
+            System.Net.HttpWebRequest.DefaultWebProxy = null;
             Console.WriteLine("Starting Authtentication");
             string accessToken;
 
@@ -91,32 +195,19 @@ namespace TTSSample
                 Console.WriteLine(ex.Message);
                 return;
             }
+            Console.WriteLine("Starting TTSSample request code execution.");
+
+            //var sentences = File.ReadAllLines("en-US_SST1000.txt");
+            var sentences = File.ReadAllLines("zh-CN_SST1000.txt");
+            //var sentences = new string[] { "Hello world." };
+
 
             Console.WriteLine("Starting TTSSample request code execution.");
 
-            string requestUri = "https://speech.platform.bing.com/synthesize";
+            //LegacyTest(accessToken, sentences);
 
-            var cortana = new Synthesize();
-
-            cortana.OnAudioAvailable += PlayAudio;
-            cortana.OnError += ErrorHandler;
-
-            // Reuse Synthesize object to minimize latency
-            cortana.Speak(CancellationToken.None, new Synthesize.InputOptions()
-            {
-                RequestUri = new Uri(requestUri),
-                // Text to be spoken.
-                Text = "Hi, how are you doing?",
-                VoiceType = Gender.Female,
-                // Refer to the documentation for complete list of supported locales.
-                Locale = "en-US",
-                // You can also customize the output voice. Refer to the documentation to view the different
-                // voices that the TTS service can output.
-                VoiceName = "Microsoft Server Speech Text to Speech Voice (en-US, ZiraRUS)",
-                // Service can return audio in different output format.
-                OutputFormat = AudioOutputFormat.Riff16Khz16BitMonoPcm,
-                AuthorizationToken = "Bearer " + accessToken,
-            }).Wait();
+            //HttpClientTest(accessToken, sentences, "en-US", "Microsoft Server Speech Text to Speech Voice (en-US, ZiraRUS)");
+            HttpClientTest(accessToken, sentences, "zh-CN", "Microsoft Server Speech Text to Speech Voice (zh-CN, HuiHuiRUS)");
         }
     }
 }
